@@ -1,0 +1,9 @@
+{
+  "model_name": "scoring_credit_lgbm_optimise",
+  "model_version": 1,
+  "run_id": "9be1dfe48f454c8cad01050019a44f4f",
+  "n_features": 200,
+  "seuil_optimal": 0.5016,
+  "mean_auc": 0.7768,
+  "methode_optimisation": "Optuna"
+}
