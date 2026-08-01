@@ -1,0 +1,51 @@
+# ── Python ────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+build/
+dist/
+
+# ── Environnements virtuels ──────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── IDE ───────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+
+# ── Jupyter ───────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── MLflow (base locale + artefacts de run, ne pas versionner) ──────
+mlflow.db
+mlruns/
+mlartifacts/
+
+# ── Données (jamais commiter de données, même dérivées) ────────────
+output/*.csv
+output/*.db
+data/
+*.csv
+*.parquet
+
+# ── Modèle exporté (fichiers volumineux — à adapter selon la taille) ─
+# Décommentez si lgbm_model.txt dépasse quelques Mo :
+# model/lgbm_model.txt
+
+# ── Secrets / config locale ──────────────────────────────────────
+.env
+*.pem
+*.key
+secrets.yaml
+
+# ── Logs ──────────────────────────────────────────────────────────
+*.log
+uvicorn.log
+
+# ── OS ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
