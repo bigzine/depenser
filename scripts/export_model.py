@@ -2,44 +2,86 @@
 Script d'export du modèle final vers des artefacts autonomes (indépendants de MLflow),
 utilisables par l'API sans dépendre d'un serveur MLflow accessible au runtime.
 
-À exécuter UNE FOIS depuis le notebook étape 4 (etape4_optimisation_hp_seuil.ipynb),
-après la cellule qui entraîne `lgbm_final` et calcule `seuil_opt` / `TOP_200`.
+Script AUTONOME — s'exécute directement, sans dépendre de variables de notebook :
 
-Copiez ce code dans une nouvelle cellule à la fin du notebook, ou exécutez-le
-en important les variables nécessaires si vous préférez un script séparé.
+    python scripts/export_model.py
+
+Prérequis :
+    - Le modèle a été entraîné et enregistré dans MLflow sous le nom
+      "scoring_credit_lgbm_optimise" (étape 4).
+    - Le fichier output/seuil_optimal.txt existe (généré par l'étape 4).
 """
 
 import json
 import os
 
-# ── Dossier de sortie ────────────────────────────────────────────────
-MODEL_DIR = "../model"  # notebook dans notebooks/, model/ à la racine du repo
+import mlflow
+import mlflow.lightgbm
+from mlflow.tracking import MlflowClient
+
+# ── Configuration ─────────────────────────────────────────────────────
+OUTPUT_DIR = "./output"          # adapter selon l'emplacement d'exécution
+MODEL_DIR = "./model"
+MODEL_NAME = "scoring_credit_lgbm_optimise"
+
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# ── 1. Modèle LightGBM (format natif, pas de dépendance pickle/mlflow) ─
-lgbm_final.booster_.save_model(os.path.join(MODEL_DIR, "lgbm_model.txt"))
+mlflow.set_tracking_uri("sqlite:///mlflow.db")
+client = MlflowClient()
 
-# ── 2. Liste des features attendues, dans l'ordre exact d'entraînement ─
+# ── 1. Récupération de la dernière version du modèle enregistré ────────
+versions = client.search_model_versions(f"name='{MODEL_NAME}'")
+if not versions:
+    raise RuntimeError(
+        f"Aucune version trouvée pour le modèle '{MODEL_NAME}'. "
+        "Avez-vous bien exécuté le notebook étape 4 jusqu'au bout ?"
+    )
+latest_version = max(versions, key=lambda v: int(v.version))
+model_uri = f"models:/{MODEL_NAME}/{latest_version.version}"
+
+lgbm_model = mlflow.lightgbm.load_model(model_uri)
+booster = lgbm_model.booster_
+
+# ── 2. Liste des features (stockée nativement dans le booster) ─────────
+features = booster.feature_name()
+
+# ── 3. Seuil de décision optimal (sauvegardé à l'étape 4) ──────────────
+seuil_path = os.path.join(OUTPUT_DIR, "seuil_optimal.txt")
+if not os.path.exists(seuil_path):
+    raise FileNotFoundError(
+        f"{seuil_path} introuvable. Il doit être généré par le notebook étape 4."
+    )
+with open(seuil_path) as f:
+    seuil_optimal = float(f.read())
+
+# ── 4. Métriques du run associé (pour metadata.json) ────────────────────
+run = client.get_run(latest_version.run_id)
+mean_auc = run.data.metrics.get("mean_auc", -1.0)
+methode_optimisation = run.data.params.get("methode_optimisation", "unknown")
+
+# ── Export des artefacts ────────────────────────────────────────────────
+booster.save_model(os.path.join(MODEL_DIR, "lgbm_model.txt"))
+
 with open(os.path.join(MODEL_DIR, "features.json"), "w") as f:
-    json.dump(TOP_200, f, indent=2)
+    json.dump(features, f, indent=2)
 
-# ── 3. Seuil de décision optimal ────────────────────────────────────────
 with open(os.path.join(MODEL_DIR, "threshold.json"), "w") as f:
-    json.dump({"seuil_optimal": round(seuil_opt, 4)}, f, indent=2)
+    json.dump({"seuil_optimal": round(seuil_optimal, 4)}, f, indent=2)
 
-# ── 4. Métadonnées (utile pour /model-info et le suivi de version) ─────
 metadata = {
-    "model_name": "scoring_credit_lgbm_optimise",
-    "n_features": len(TOP_200),
-    "seuil_optimal": round(seuil_opt, 4),
-    "mean_auc": round(float(best_res_final["AUC"]), 4),
-    "methode_optimisation": methode_gagnante,
+    "model_name": MODEL_NAME,
+    "model_version": latest_version.version,
+    "run_id": latest_version.run_id,
+    "n_features": len(features),
+    "seuil_optimal": round(seuil_optimal, 4),
+    "mean_auc": round(mean_auc, 4),
+    "methode_optimisation": methode_optimisation,
 }
 with open(os.path.join(MODEL_DIR, "metadata.json"), "w") as f:
     json.dump(metadata, f, indent=2)
 
 print("✅ Export terminé :")
-print(f"   - {MODEL_DIR}/lgbm_model.txt")
-print(f"   - {MODEL_DIR}/features.json  ({len(TOP_200)} features)")
-print(f"   - {MODEL_DIR}/threshold.json (seuil = {seuil_opt:.4f})")
+print(f"   - {MODEL_DIR}/lgbm_model.txt  (version {latest_version.version}, run {latest_version.run_id})")
+print(f"   - {MODEL_DIR}/features.json  ({len(features)} features)")
+print(f"   - {MODEL_DIR}/threshold.json (seuil = {seuil_optimal:.4f})")
 print(f"   - {MODEL_DIR}/metadata.json")
