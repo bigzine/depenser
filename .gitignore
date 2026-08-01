@@ -26,8 +26,7 @@ mlruns/
 mlartifacts/
 
 # ── Données (jamais commiter de données, même dérivées) ────────────
-output/*.csv
-output/*.db
+output/
 data/
 *.csv
 *.parquet
