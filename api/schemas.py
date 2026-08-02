@@ -2,7 +2,7 @@
 
 from typing import Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ClientFeatures(BaseModel):
@@ -55,8 +55,8 @@ class ClientData(BaseModel):
     )
     features: ClientFeatures
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "sk_id_curr": 100001,
                 "features": {
@@ -73,6 +73,7 @@ class ClientData(BaseModel):
                 },
             }
         }
+    )
 
 
 class PredictionResponse(BaseModel):
