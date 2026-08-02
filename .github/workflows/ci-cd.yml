@@ -1,0 +1,81 @@
+name: CI/CD - Scoring API
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── 1. Tests unitaires + intégration ──────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installation de Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installation des dépendances (dev)
+        run: pip install -r requirements-dev.txt
+
+      - name: Exécution des tests
+        run: python -m pytest tests/ -v
+
+  # ── 2. Construction de l'image Docker (validation du build) ─────────────
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Construction de l'image Docker
+        run: docker build -t scoring-api:${{ github.sha }} .
+
+      - name: Vérification rapide de l'image (démarrage + healthcheck)
+        run: |
+          docker run -d --name scoring-api-test -p 8000:8000 scoring-api:${{ github.sha }}
+          echo "Attente du démarrage de l'API..."
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8000/health; then
+              echo "✅ API opérationnelle"
+              break
+            fi
+            sleep 2
+          done
+          curl -sf http://localhost:8000/health || (docker logs scoring-api-test && exit 1)
+          docker stop scoring-api-test
+
+  # ── 3. Déploiement sur Hugging Face Spaces ───────────────────────────────
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Préparation du contenu à déployer
+        run: |
+          mkdir -p space_build
+          cp -r api/ space_build/api/
+          cp -r model/ space_build/model/
+          cp Dockerfile space_build/Dockerfile
+          cp requirements.txt space_build/requirements.txt
+          cp deploy/space_README.md space_build/README.md
+
+      - name: Push vers Hugging Face Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          cd space_build
+          git init
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .
+          git commit -m "deploy: ${{ github.sha }}"
+          git push --force "https://Ediagabate:${HF_TOKEN}@huggingface.co/spaces/Ediagabate/scoring-credit-api" HEAD:main
