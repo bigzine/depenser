@@ -8,10 +8,14 @@ Documentation interactive une fois lancée :
     http://127.0.0.1:8000/docs
 """
 
+import json
 import logging
+import os
 import time
+from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import PlainTextResponse
 
 from .model_loader import scoring_model
 from .schemas import (
@@ -23,6 +27,48 @@ from .schemas import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("scoring_api")
+
+# ── Logging structuré des requêtes de prédiction (pour analyse de drift) ────
+LOG_DIR = os.environ.get("LOG_DIR", os.path.join(os.path.dirname(__file__), "..", "logs"))
+os.makedirs(LOG_DIR, exist_ok=True)
+PREDICTIONS_LOG_PATH = os.path.join(LOG_DIR, "predictions.jsonl")
+
+# Clé simple pour protéger l'endpoint d'export des logs (PoC — à remplacer par
+# une vraie gestion de secrets/authentification en production).
+ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "changeme")
+
+
+def log_prediction_event(
+    sk_id_curr,
+    features: dict,
+    proba: float | None,
+    decision: str | None,
+    threshold: float | None,
+    missing_features: int | None,
+    inference_time_ms: float,
+    status: str,
+    error_detail: str | None = None,
+) -> None:
+    """Écrit un évènement de prédiction au format JSON Lines pour analyse ultérieure."""
+    event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "sk_id_curr": sk_id_curr,
+        "status": status,  # "success" ou "error"
+        "inputs": features,
+        "n_inputs_provided": len(features) if features else 0,
+        "probability_default": proba,
+        "decision": decision,
+        "threshold_used": threshold,
+        "missing_features": missing_features,
+        "inference_time_ms": inference_time_ms,
+        "error_detail": error_detail,
+    }
+    try:
+        with open(PREDICTIONS_LOG_PATH, "a") as f:
+            f.write(json.dumps(event) + "\n")
+    except Exception:  # noqa: BLE001
+        logger.exception("Échec de l'écriture du log de prédiction")
+
 
 app = FastAPI(
     title="Prêt à Dépenser — API de Scoring Crédit",
@@ -72,17 +118,30 @@ def predict(client: ClientData):
       - Les champs bornés (EXT_SOURCE_*, AGE_YEARS, REGION_RATING_CLIENT, montants...)
         sont validés automatiquement par le schéma (422 si hors plage ou mauvais type).
       - Les autres features (parmi les 200 attendues) sont optionnelles.
-    """
-    if not scoring_model.is_loaded:
-        raise HTTPException(status_code=503, detail="Modèle non chargé.")
 
+    Chaque appel (succès ou erreur) est journalisé dans logs/predictions.jsonl
+    pour permettre une analyse ultérieure du data drift et des métriques
+    opérationnelles (latence, taux d'erreur).
+    """
     features = client.features.to_feature_dict()
+
+    if not scoring_model.is_loaded:
+        log_prediction_event(
+            client.sk_id_curr, features, None, None, None, None, 0.0,
+            status="error", error_detail="Modèle non chargé",
+        )
+        raise HTTPException(status_code=503, detail="Modèle non chargé.")
 
     start = time.perf_counter()
     try:
         proba = scoring_model.predict_proba(features)
     except Exception as exc:  # noqa: BLE001
+        elapsed_ms = (time.perf_counter() - start) * 1000
         logger.exception("Erreur lors de la prédiction")
+        log_prediction_event(
+            client.sk_id_curr, features, None, None, scoring_model.threshold, None,
+            elapsed_ms, status="error", error_detail=str(exc),
+        )
         raise HTTPException(status_code=500, detail=f"Erreur de prédiction : {exc}") from exc
     elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -107,4 +166,48 @@ def predict(client: ClientData):
         client.sk_id_curr, proba, response.decision, missing, elapsed_ms,
     )
 
+    log_prediction_event(
+        client.sk_id_curr, features, response.probability_default, response.decision,
+        response.threshold_used, missing, elapsed_ms, status="success",
+    )
+
     return response
+
+
+@app.get("/admin/logs", response_class=PlainTextResponse, tags=["Admin"])
+def export_logs(x_admin_key: str = Header(default="")):
+    """
+    Exporte les logs de prédiction accumulés (format JSON Lines), pour
+    téléchargement et analyse locale (drift, anomalies opérationnelles).
+
+    PoC : protection minimale par clé statique dans un header. À remplacer
+    par une authentification robuste avant tout usage en production réelle.
+    """
+    if x_admin_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Clé d'administration invalide.")
+
+    if not os.path.exists(PREDICTIONS_LOG_PATH):
+        return ""
+
+    with open(PREDICTIONS_LOG_PATH) as f:
+        return f.read()
+
+
+@app.get("/admin/logs/stats", tags=["Admin"])
+def logs_stats(x_admin_key: str = Header(default="")):
+    """Statistiques rapides sur les logs accumulés (sans tout télécharger)."""
+    if x_admin_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Clé d'administration invalide.")
+
+    if not os.path.exists(PREDICTIONS_LOG_PATH):
+        return {"n_events": 0}
+
+    n_events = 0
+    n_errors = 0
+    with open(PREDICTIONS_LOG_PATH) as f:
+        for line in f:
+            n_events += 1
+            if '"status": "error"' in line:
+                n_errors += 1
+
+    return {"n_events": n_events, "n_errors": n_errors, "log_path": PREDICTIONS_LOG_PATH}

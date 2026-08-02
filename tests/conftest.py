@@ -62,6 +62,10 @@ with open(os.path.join(_tmp_dir, "metadata.json"), "w") as f:
 # est lu via une variable d'environnement au moment de l'import du module).
 os.environ["MODEL_DIR"] = _tmp_dir
 
+# Isole les logs de prédiction générés pendant les tests, pour ne pas polluer
+# le fichier logs/predictions.jsonl réel du projet.
+os.environ["LOG_DIR"] = tempfile.mkdtemp(prefix="scoring_test_logs_")
+
 
 @pytest.fixture(scope="session")
 def client():
