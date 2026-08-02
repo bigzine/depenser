@@ -16,7 +16,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-MODEL_DIR = os.environ.get("MODEL_DIR", os.path.join(os.path.dirname(__file__), "../..", "model"))
+MODEL_DIR = os.environ.get("MODEL_DIR", os.path.join(os.path.dirname(__file__), "..", "model"))
 
 
 class ScoringModel:

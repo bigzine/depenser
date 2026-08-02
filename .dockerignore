@@ -1,0 +1,35 @@
+# ── Notebooks & données de dev (non nécessaires au runtime de l'API) ───────
+notebooks/
+tests/
+scripts/
+data/
+output/
+mlruns/
+mlartifacts/
+mlflow.db
+
+# ── Environnements & VCS ──────────────────────────────────────────────────
+.venv/
+venv/
+.git/
+.gitignore
+
+# ── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# ── IDE ─────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+
+# ── Docs & config non nécessaires dans l'image ─────────────────────────────
+README.md
+requirements-dev.txt
+pytest.ini
+.dockerignore
+Dockerfile
+
+# ── OS ──────────────────────────────────────────────────────────────────
+.DS_Store
