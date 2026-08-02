@@ -66,22 +66,27 @@ def predict(client: ClientData):
     """
     Prédit la probabilité de défaut d'un client et retourne la décision
     d'octroi de crédit (ACCEPTE / REFUSE) selon le seuil métier optimal.
+
+    Validation :
+      - EXT_SOURCE_MEAN et AMT_CREDIT sont obligatoires (422 si absents).
+      - Les champs bornés (EXT_SOURCE_*, AGE_YEARS, REGION_RATING_CLIENT, montants...)
+        sont validés automatiquement par le schéma (422 si hors plage ou mauvais type).
+      - Les autres features (parmi les 200 attendues) sont optionnelles.
     """
     if not scoring_model.is_loaded:
         raise HTTPException(status_code=503, detail="Modèle non chargé.")
 
-    if not client.features:
-        raise HTTPException(status_code=400, detail="Le champ 'features' ne peut pas être vide.")
+    features = client.features.to_feature_dict()
 
     start = time.perf_counter()
     try:
-        proba = scoring_model.predict_proba(client.features)
+        proba = scoring_model.predict_proba(features)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Erreur lors de la prédiction")
         raise HTTPException(status_code=500, detail=f"Erreur de prédiction : {exc}") from exc
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    missing = scoring_model.count_missing(client.features)
+    missing = scoring_model.count_missing(features)
     if missing:
         logger.warning(
             "Client %s : %d/%d features attendues sont absentes de la requête",
