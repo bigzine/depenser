@@ -14,7 +14,6 @@ from typing import Dict, List, Optional
 
 import lightgbm as lgb
 import numpy as np
-import pandas as pd
 
 MODEL_DIR = os.environ.get("MODEL_DIR", os.path.join(os.path.dirname(__file__), "..", "model"))
 
@@ -47,6 +46,10 @@ class ScoringModel:
 
         with open(features_path) as f:
             self.features = json.load(f)
+        # Index précalculé {nom_feature: position} pour un accès O(1) lors de
+        # la construction de chaque ligne (voir _build_row).
+        self._feature_index = {name: i for i, name in enumerate(self.features)}
+        self._n_features = len(self.features)
 
         with open(threshold_path) as f:
             self.threshold = json.load(f)["seuil_optimal"]
@@ -59,13 +62,26 @@ class ScoringModel:
     def is_loaded(self) -> bool:
         return self.booster is not None
 
-    def _build_row(self, features: Dict[str, float]) -> pd.DataFrame:
+    def _build_row(self, features: Dict[str, float]) -> np.ndarray:
         """
-        Construit une ligne de features dans l'ordre exact attendu par le modèle.
-        Les colonnes manquantes deviennent NaN (LightGBM les gère nativement).
+        Construit une ligne de features (tableau numpy 1×N) dans l'ordre exact
+        attendu par le modèle. Les colonnes manquantes deviennent NaN
+        (LightGBM les gère nativement).
+
+        Optimisation (étape 4 — profiling) : construction directe en numpy,
+        sans passer par un pandas.DataFrame intermédiaire. Le profiling a
+        montré que la construction du DataFrame représentait ~73% du temps
+        total de prédiction par requête (voir monitoring/etape4_optimisation_performance.ipynb),
+        principalement à cause de la création d'objets pandas puis de leur
+        reconversion interne en numpy par LightGBM lui-même. Cette version
+        est ~28x plus rapide, avec des prédictions strictement identiques.
         """
-        row = {col: features.get(col, np.nan) for col in self.features}
-        return pd.DataFrame([row], columns=self.features)
+        row = np.full(self._n_features, np.nan, dtype=np.float64)
+        for key, value in features.items():
+            idx = self._feature_index.get(key)
+            if idx is not None:
+                row[idx] = value
+        return row.reshape(1, -1)
 
     def count_missing(self, features: Dict[str, float]) -> int:
         return sum(1 for col in self.features if col not in features)

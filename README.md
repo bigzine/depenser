@@ -29,9 +29,10 @@ monitoring du data drift en production.
 │   ├── threshold.json
 │   └── metadata.json
 ├── tests/                         # Suite pytest (unitaires + intégration)
-├── monitoring/                    # Analyse du data drift et dashboard
+├── monitoring/                    # Analyse du data drift, performance, et dashboard
 │   ├── simulate_traffic.py        # Génère du trafic de test vers l'API déployée
-│   ├── etape3_drift_analysis.ipynb  # Analyse de drift (étude complète, avec résultats)
+│   ├── etape3_drift_analysis.ipynb        # Analyse de drift (étude complète, avec résultats)
+│   ├── etape4_optimisation_performance.ipynb  # Profiling et optimisation (étude complète)
 │   ├── dashboard.py                # Dashboard Streamlit interactif
 │   └── production_logs.jsonl       # Exemple de logs de production exportés
 ├── .github/workflows/ci-cd.yml    # Pipeline CI/CD (test → build → déploiement)
@@ -241,7 +242,39 @@ direct depuis l'API (URL + clé admin).
   production réelle, prévoir anonymisation/pseudonymisation et une politique
   de rétention conforme RGPD.
 
-## 7. Historique et gouvernance
+## 7. Optimisation des performances (étape 4)
+
+Après déploiement, le chemin d'inférence a été profilé (`cProfile`) pour
+identifier les goulots d'étranglement réels — voir l'étude complète dans
+`monitoring/etape4_optimisation_performance.ipynb`.
+
+**Résultat du profiling** : la construction d'un `pandas.DataFrame` par
+requête représentait l'essentiel du temps de calcul interne (le modèle
+LightGBM lui-même n'en représentait qu'une petite partie).
+
+**Optimisation déployée** : remplacement de cette construction pandas par une
+construction directe en `numpy` dans `api/model_loader.py`.
+
+| | Avant (pandas) | Après (numpy, déployé) |
+|---|---|---|
+| Temps de calcul interne / requête | ~2.6 ms | ~0.1 ms |
+| Accélération | — | **~27x** |
+| Régression sur les prédictions | — | **Aucune** (identiques bit-à-bit) |
+| Nouvelles dépendances | — | Aucune (`pandas` retiré du runtime) |
+
+**ONNX Runtime** a également été testé (conversion + benchmark), avec un
+gain supplémentaire mesuré (~1.5-1.7x par rapport à la version numpy) mais
+**non déployé** : le temps d'inférence est déjà largement sous la milliseconde
+après l'optimisation numpy, très en dessous de la latence réseau/ASGI
+observée en production (p95 ≈ 13.5 ms) — le gain supplémentaire d'ONNX ne
+serait pas perceptible, alors qu'il ajoute une dépendance et un format de
+modèle supplémentaires à maintenir. Détails et justification complète dans le
+notebook dédié.
+
+Cette optimisation est validée par la suite de tests (`tests/test_model_loader.py`)
+et déployée en production via le pipeline CI/CD existant.
+
+## 8. Historique et gouvernance
 
 - Commits explicites par fonctionnalité (voir `git log`)
 - `.gitignore` excluant données, base MLflow locale, secrets et environnements
