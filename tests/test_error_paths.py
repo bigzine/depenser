@@ -1,12 +1,10 @@
 """
 Tests UNITAIRES / D'INTÉGRATION couvrant les branches d'erreur non exercées
-par les tests existants : modèle non chargé, échec de prédiction, absence de
-fichier de logs, comptage des erreurs dans les logs.
+par les tests existants : modèle non chargé, échec de prédiction, base de
+données vide, comptage des erreurs dans les logs.
 """
 
-import os
-
-import pytest
+from sqlalchemy import create_engine
 
 
 def test_model_info_returns_404_when_no_metadata(client, monkeypatch):
@@ -38,31 +36,26 @@ def test_predict_returns_500_on_internal_prediction_error(client, monkeypatch, v
     assert "erreur de prédiction" in r.json()["detail"].lower() or "erreur simulée" in r.json()["detail"]
 
 
-def test_admin_logs_returns_empty_string_when_no_log_file(client, monkeypatch, tmp_path):
-    from api import main
+def test_export_and_stats_empty_on_fresh_database(monkeypatch, tmp_path):
+    """Vérifie le comportement de db.export_logs_as_jsonl()/get_stats() sur
+    une base fraîchement créée, sans passer par le client HTTP partagé (dont
+    la base accumule déjà des évènements des autres tests de la session)."""
+    from api import db
 
-    fake_path = str(tmp_path / "nonexistent.jsonl")
-    monkeypatch.setattr(main, "PREDICTIONS_LOG_PATH", fake_path)
-    r = client.get("/admin/logs", headers={"x-admin-key": "changeme"})
-    assert r.status_code == 200
-    assert r.text == ""
+    fresh_engine = create_engine(f"sqlite:///{tmp_path}/fresh.db")
+    monkeypatch.setattr(db, "engine", fresh_engine)
+    db.init_db()
 
-
-def test_admin_logs_stats_returns_zero_when_no_log_file(client, monkeypatch, tmp_path):
-    from api import main
-
-    fake_path = str(tmp_path / "nonexistent.jsonl")
-    monkeypatch.setattr(main, "PREDICTIONS_LOG_PATH", fake_path)
-    r = client.get("/admin/logs/stats", headers={"x-admin-key": "changeme"})
-    assert r.status_code == 200
-    assert r.json() == {"n_events": 0}
+    assert db.get_stats() == {"n_events": 0, "n_errors": 0}
+    assert db.export_logs_as_jsonl() == ""
 
 
 def test_admin_logs_stats_counts_errors_correctly(client, monkeypatch, tmp_path, valid_payload):
-    from api import main
+    from api import db, main
 
-    fake_path = str(tmp_path / "counted.jsonl")
-    monkeypatch.setattr(main, "PREDICTIONS_LOG_PATH", fake_path)
+    fresh_engine = create_engine(f"sqlite:///{tmp_path}/counted.db")
+    monkeypatch.setattr(db, "engine", fresh_engine)
+    db.init_db()
 
     # Un succès...
     client.post("/predict", json=valid_payload)
@@ -73,7 +66,6 @@ def test_admin_logs_stats_counts_errors_correctly(client, monkeypatch, tmp_path,
     monkeypatch.setattr(main.scoring_model, "predict_proba", boom)
     client.post("/predict", json=valid_payload)
 
-    r = client.get("/admin/logs/stats", headers={"x-admin-key": "changeme"})
-    body = r.json()
-    assert body["n_events"] == 2
-    assert body["n_errors"] == 1
+    stats = db.get_stats()
+    assert stats["n_events"] == 2
+    assert stats["n_errors"] == 1

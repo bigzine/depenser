@@ -62,9 +62,11 @@ with open(os.path.join(_tmp_dir, "metadata.json"), "w") as f:
 # est lu via une variable d'environnement au moment de l'import du module).
 os.environ["MODEL_DIR"] = _tmp_dir
 
-# Isole les logs de prédiction générés pendant les tests, pour ne pas polluer
-# le fichier logs/predictions.jsonl réel du projet.
-os.environ["LOG_DIR"] = tempfile.mkdtemp(prefix="scoring_test_logs_")
+# Base de données de test isolée (SQLite fichier temporaire) — ne touche jamais
+# la base PostgreSQL de production. Voir api/db.py : DATABASE_URL sélectionne
+# le backend (PostgreSQL en prod, SQLite ici).
+_tmp_db_dir = tempfile.mkdtemp(prefix="scoring_test_db_")
+os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(_tmp_db_dir, "test_predictions.db")
 
 
 @pytest.fixture(scope="session")
@@ -74,7 +76,8 @@ def client():
 
     from api.main import app
 
-    return TestClient(app)
+    with TestClient(app) as test_client:  # déclenche l'évènement startup (db.init_db())
+        yield test_client
 
 
 @pytest.fixture

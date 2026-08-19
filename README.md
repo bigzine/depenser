@@ -104,12 +104,20 @@ docker build -t scoring-api .
 docker run -p 8000:8000 scoring-api
 ```
 
-Variable d'environnement utile :
+Variables d'environnement utiles :
 - `ADMIN_API_KEY` — clé protégeant les endpoints `/admin/logs*` (par défaut
-  `changeme`, **à définir explicitement en production**) :
-  ```bash
-  docker run -p 8000:8000 -e ADMIN_API_KEY="votre_clé_secrète" scoring-api
-  ```
+  `changeme`, **à définir explicitement en production**)
+- `DATABASE_URL` — chaîne de connexion PostgreSQL pour la persistance des
+  logs de prédiction (voir section 6). Sans cette variable, un fichier
+  SQLite local est utilisé à la place (pas de persistance en conteneur
+  éphémère).
+
+```bash
+docker run -p 8000:8000 \
+  -e ADMIN_API_KEY="votre_clé_secrète" \
+  -e DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require" \
+  scoring-api
+```
 
 ### Endpoints principaux
 
@@ -180,19 +188,28 @@ Secret requis dans GitHub (Settings → Secrets and variables → Actions) :
 
 ### Comment sont collectées les données de production
 
-Chaque appel à `/predict` (succès ou erreur) est journalisé au format JSON
-Lines dans `logs/predictions.jsonl` côté API : timestamp, features en entrée,
-prédiction, décision, latence, nombre de features manquantes.
+Chaque appel à `/predict` (succès ou erreur) est journalisé **immédiatement**
+en base de données (PostgreSQL en production, voir `api/db.py`) : timestamp,
+features en entrée, prédiction, décision, latence, nombre de features
+manquantes. L'écriture est synchrone — aucune étape d'export manuelle ou
+planifiée n'est nécessaire pour que les données soient persistées.
 
-Le stockage de l'API Hugging Face étant éphémère (pas de persistance entre
-redémarrages), le flux recommandé est :
+Variable d'environnement requise sur le Space Hugging Face (et en local si
+vous voulez utiliser PostgreSQL plutôt que le SQLite par défaut) :
+`DATABASE_URL` (chaîne de connexion PostgreSQL, ex. fournie par
+[Neon](https://neon.tech)). Sans cette variable, l'API utilise
+automatiquement un fichier SQLite local (`logs/predictions.db`) — pratique
+en développement, mais sans persistance entre redémarrages de conteneur.
+
+Pour analyser les données stockées, exportez-les à tout moment (aucun risque
+de perte, les données sont déjà en base) :
 
 ```bash
 # 1. Générer du trafic (ou attendre du trafic réel)
 python monitoring/simulate_traffic.py --url https://ediagabate-scoring-credit-api.hf.space \
     --n-normal 150 --n-drifted 150
 
-# 2. Exporter les logs accumulés
+# 2. Exporter les logs stockés en base
 curl https://ediagabate-scoring-credit-api.hf.space/admin/logs \
   -H "x-admin-key: <votre_clé>" > monitoring/production_logs.jsonl
 ```
