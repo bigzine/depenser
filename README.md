@@ -155,9 +155,13 @@ passée dans `additional_features`.
 python -m pytest tests/ -v
 ```
 
-36 tests unitaires + intégration : validation du schéma (champs obligatoires,
-plages, types), endpoints (`/health`, `/model-info`, `/predict`), et
-journalisation des prédictions.
+53 tests unitaires + intégration, **couverture de code : 98%** (`api/`) —
+validation du schéma (champs obligatoires, plages, types), endpoints
+(`/health`, `/model-info`, `/predict`, `/admin/logs*`), journalisation des
+prédictions, et gestion des erreurs (modèle non chargé, échec de prédiction,
+absence de fichier de logs). Les 2 lignes non couvertes correspondent à un
+gestionnaire d'exception d'écriture disque, difficile à déclencher de façon
+réaliste sans mocker une panne matérielle.
 
 ## 5. CI/CD
 
